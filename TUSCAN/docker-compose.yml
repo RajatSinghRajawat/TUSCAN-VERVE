@@ -1,0 +1,106 @@
+services:
+  # 1. MongoDB Database
+  mongo:
+    image: mongo:7.0
+    container_name: tuscan_mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: tuscan_verve
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - tuscan_network
+
+  # 2. Tuscan Verve Backend API
+  backend:
+    build:
+      context: ./TUSCAN-VERVE-BACKEND
+      dockerfile: Dockerfile
+    container_name: tuscan_backend
+    restart: unless-stopped
+    environment:
+      PORT: 5000
+      NODE_ENV: production
+      MONGO_URI: mongodb://mongo:27017/tuscan_verve
+      JWT_SECRET: ${JWT_SECRET:-tuscan_verve_prod_secret_key_2026}
+      CLIENT_URL: ${CLIENT_URL:-http://localhost:5173,http://localhost:5174,https://tuscanverve.store,https://admin.tuscanverve.store}
+    volumes:
+      - backend_uploads:/app/uploads
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - tuscan_network
+
+  # 3. Tuscan Verve Customer Storefront (React / Vite)
+  frontend:
+    build:
+      context: ./TUSCAN-VERVE
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-/api}
+    container_name: tuscan_storefront
+    restart: unless-stopped
+    networks:
+      - tuscan_network
+
+  # 4. Tuscan Verve Admin Dashboard (React / Vite)
+  admin:
+    build:
+      context: ./TUSCAN-ADMIN
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-/api}
+    container_name: tuscan_admin
+    restart: unless-stopped
+    networks:
+      - tuscan_network
+
+  # 5. Nginx Reverse Proxy Gateway & SSL
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: tuscan_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      API_DOMAIN: ${API_DOMAIN:-ecommerce-api.yourdomain.com}
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+      - backend_uploads:/var/www/uploads:ro
+    depends_on:
+      - backend
+    networks:
+      - tuscan_network
+
+  # 6. Certbot for Automated SSL Certificates & Auto-renewal
+  certbot:
+    image: certbot/certbot:latest
+    container_name: tuscan_certbot
+    restart: unless-stopped
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - tuscan_network
+
+volumes:
+  mongo_data:
+    driver: local
+  backend_uploads:
+    driver: local
+
+networks:
+  tuscan_network:
+    driver: bridge

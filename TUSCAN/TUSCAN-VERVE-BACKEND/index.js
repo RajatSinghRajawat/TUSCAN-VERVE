@@ -22,10 +22,15 @@ const app = express();
 connectDB();
 
 // Core middlewares
+const configuredOrigins = (process.env.CLIENT_URL || '')
+  .split(',')
+  .map((url) => url.trim())
+  .filter(Boolean);
+
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
-  process.env.CLIENT_URL,
+  ...configuredOrigins,
 ].filter(Boolean);
 
 app.use(
